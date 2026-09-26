@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<title>RememberIt — 100% Local &amp; Private Maintenance Tracker</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;1,500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          background: "#f0f6fc",
+          surface: "#ffffff",
+          brand: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8' },
+          accent: { 50:'#fdf2f8',100:'#fce7f3',200:'#fbcfe8',300:'#f9a8d4',400:'#f472b6',500:'#ec4899' }
+        },
+        fontFamily: {
+          sans: ['Montserrat','sans-serif'],
+          bebas: ['Bebas Neue','sans-serif']
+        }
+      }
+    }
+  }
+</script>
+<style>
+  html, body { margin:0; padding:0; background-color:#f0f6fc; color:#0f172a; font-family:'Montserrat',sans-serif; min-height:max(884px,100dvh); }
+  body { overscroll-behavior:none; -webkit-tap-highlight-color:transparent; }
+  .font-bebas { font-family:'Bebas Neue',sans-serif; letter-spacing:0.04em; }
+  .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem); }
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  ::-webkit-scrollbar { display:none; }
+  .no-scrollbar { scrollbar-width:none; }
+  .material-symbols-outlined { font-variation-settings:'FILL' 0,'wght' 500,'GRAD' 0,'opsz' 24; }
+  .icon-fill { font-variation-settings:'FILL' 1,'wght' 500,'GRAD' 0,'opsz' 24; }
+  .view-hidden { display:none !important; }
+</style>
+</head>
+<body class="bg-background flex flex-col min-h-screen selection:bg-blue-100 selection:text-blue-900">
+<div id="app" class="flex flex-col min-h-screen"></div>
+
+<!-- Global Toast -->
+<div id="toast" class="fixed bottom-24 inset-x-4 max-w-[408px] mx-auto z-[60] transform translate-y-32 opacity-0 pointer-events-none transition-all duration-300 ease-out flex items-center justify-between p-3 px-4 rounded-2xl bg-slate-900 text-white shadow-xl">
+  <div class="flex items-center gap-2 min-w-0">
+    <span class="material-symbols-outlined text-emerald-400 text-[20px] flex-shrink-0" id="toast-icon">check_circle</span>
+    <span class="text-xs font-medium truncate" id="toast-message">Saved</span>
+  </div>
+  <button id="toast-action" class="hidden flex items-center gap-1 px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-pink-300 text-xs font-bold active:scale-95 transition-all ml-2" onclick="toastAction()">
+    <span class="material-symbols-outlined text-[14px]">undo</span><span>Undo</span>
+  </button>
+</div>
+
+<!-- Confirm dialog (native confirm is fine, this is styled for delete flows) -->
+<script>
+/* ============================================================
+   RememberIt — 100% local maintenance tracker.
+   Data lives in localStorage under rememberit.v1
+   ============================================================ */
+const LS_KEY = 'rememberit.v1';
+const DAY = 86400000;
+
+/* ---------- state ---------- */
+let state = null;
+let pendingUndo = null;
+let toastTimer = null;
+let notified = new Set();   // reminders already fired this session
+let currentFilter = 'all';
+
+function seedState() {
+  const d = n => localDateStr(new Date(Date.now() - n*DAY));
+  return {
+    version: 1,
+    items: [
+      { id:'re-oil',    name:'Royal Enfield Oil Change', subtitle:'Classic 350 Gunmetal Grey', category:'vehicles', icon:'oil_barrel',            intervalDays:90,  remind:true,  createdAt:d(500) },
+      { id:'ro-filter', name:'Water Purifier Filter Clean', subtitle:'Kitchen RO Pre-Sediment Carbon', category:'home', icon:'water_drop', intervalDays:30,  remind:true,  createdAt:d(400) },
+      { id:'washer',    name:'Deep Clean Washing Machine', subtitle:'Tub Clean Cycle + Descaler', category:'home', icon:'local_laundry_service', intervalDays:30, remind:true, createdAt:d(300) },
+      { id:'tire',      name:'Car Tire Rotation & Pressure', subtitle:'33 PSI Cold & Cross Check', category:'vehicles', icon:'tire_repair',       intervalDays:45,  remind:false, createdAt:d(300) },
+      { id:'inverter',  name:'Inverter Battery Distilled Water', subtitle:'Check float levels on all 6 cells', category:'home', icon:'battery_charging_full', intervalDays:60, remind:true, createdAt:d(200) },
+      { id:'ac',        name:'AC Dust Filter Wash', subtitle:'Master Bedroom Split Unit', category:'home', icon:'mode_fan',              intervalDays:15,  remind:false, createdAt:d(120) },
+      { id:'bike-wash', name:'Bike Wash', subtitle:'Weekly rinse + chain wipe', category:'vehicles', icon:'two_wheeler',          intervalDays:15,  remind:false, createdAt:d(120) },
+      { id:'dentist',   name:'Dental Checkup', subtitle:'Scaling & polish, 6-month cycle', category:'personal', icon:'medical_services', intervalDays:180, remind:true, createdAt:d(365) }
+    ],
+    events: [
+      { id:'e1',  itemId:'re-oil',   date:d(104), cost:620, note:'Motul 15W50 2.5L replaced, oil filter changed at Speed Garage. Washer seal verified zero leaks.' },
+      { id:'e2',  itemId:'re-oil',   date:d(192), cost:580, note:'Castrol Power1, drain plug washer replaced. DIY driveway service, oil level checked cold.' },
+      { id:'e3',  itemId:'re-oil',   date:d(284), cost:950, note:'Full service + synthetic oil + chain lubed. Smooth gear shifts restored.' },
+      { id:'e4',  itemId:'re-oil',   date:d(375), cost:550, note:'Regular 3-month drain and refill. O-rings greased.' },
+      { id:'e5',  itemId:'re-oil',   date:d(460), cost:950, note:'Annual inspection + Mobil 1 oil change. Tappet clearance adjusted.' },
+      { id:'e6',  itemId:'ro-filter',date:d(36),  cost:120, note:'Pre-sediment + carbon cartridge rinsed.' },
+      { id:'e7',  itemId:'washer',   date:d(27),  cost:0,   note:'Tub clean cycle with descaler.' },
+      { id:'e8',  itemId:'tire',     date:d(41),  cost:200, note:'Rotation + pressure set to 33 PSI cold.' },
+      { id:'e9',  itemId:'inverter', date:d(12),  cost:0,   note:'Topped all 6 cells, float levels OK.' },
+      { id:'e10', itemId:'inverter', date:d(74),  cost:0,   note:'' },
+      { id:'e11', itemId:'ac',       date:d(2),   cost:0,   note:'Indoor unit filter rinsed and dried.' },
+      { id:'e12', itemId:'bike-wash',date:d(6),   cost:80,  note:'Chain wiped + lubed after wash.' },
+      { id:'e13', itemId:'bike-wash',date:d(22),  cost:0,   note:'' },
+      { id:'e14', itemId:'dentist',  date:d(200), cost:500, note:'Scaling + polish done, no cavities.' }
+    ]
+  };
+}
+function load() {
+  try { state = JSON.parse(localStorage.getItem(LS_KEY)); } catch(e) { state = null; }
+  if (!state || !Array.isArray(state.items) || !Array.isArray(state.events)) state = seedState();
+  save();
+}
+function save() { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function uid() { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+/* ---------- date & status helpers ---------- */
+function localDateStr(d){ d = d || new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function todayStr(){ return localDateStr(); }
+function parseD(s){ return new Date(s + 'T00:00:00'); }
+function fmtDate(s){ return parseD(s).toLocaleDateString('en-PK', { day:'numeric', month:'short', year:'numeric' }); }
+function daysSince(s){ return Math.max(0, Math.floor((Date.now() - parseD(s).getTime()) / DAY)); }
+function addDaysStr(s, n){ const t = parseD(s).getTime() + n*DAY; return localDateStr(new Date(t)); }
+function fmtMoney(n){ return 'Rs ' + Number(n||0).toLocaleString('en-PK'); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function ago(n){ if(n<=0) return 'today'; if(n===1) return '1 day ago'; return n + ' days ago'; }
+
+function eventsFor(itemId){ return state.events.filter(e=>e.itemId===itemId).sort((a,b)=> b.date.localeCompare(a.date)); }
+function lastEvent(itemId){ return eventsFor(itemId)[0] || null; }
+function itemById(id){ return state.items.find(i=>i.id===id) || null; }
+
+function statusOf(item) {
+  const last = lastEvent(item.id);
+  if (!item.intervalDays) {
+    return { code: last ? 'log' : 'log', last, daysSince: last ? daysSince(last.date) : null, dueIn: null, nextDue: null };
+  }
+  if (!last) return { code:'never', last:null, daysSince:null, dueIn:0, nextDue:null };
+  const ds = daysSince(last.date);
+  const dueIn = item.intervalDays - ds;
+  const nextDue = addDaysStr(last.date, item.intervalDays);
+  if (dueIn < 0)  return { code:'overdue', last, daysSince:ds, dueIn, nextDue };
+  if (item.intervalDays - ds <= Math.max(1, Math.round(item.intervalDays*0.2)) || ds >= item.intervalDays*0.8)
+                  return { code:'duesoon', last, daysSince:ds, dueIn, nextDue };
+  return { code:'good', last, daysSince:ds, dueIn, nextDue };
+}
+const STATUS_ORDER = { overdue:0, duesoon:1, never:2, good:3, log:4 };
+
+/* ---------- routing ---------- */
+function go(hash){ location.hash = hash; }
+function parseRoute(){
+  const h = location.hash || '#/dashboard';
+  const p = h.slice(2).split('/');
+  if (p[0]==='item' && p[1]) return { view:'item', id:p[1] };
+  if (p[0]==='new')           return { view:'new' };
+  if (p[0]==='edit' && p[1])  return { view:'edit', id:p[1] };
+  if (p[0]==='analytics')     return { view:'analytics' };
+  if (p[0]==='history')       return { view:'history' };
+  return { view:'dashboard' };
+}
+
+/* ---------- shared chrome ---------- */
+function header(subtitle, iconName) {
+  return `
+  <header class="fixed top-0 inset-x-0 z-50 bg-white/90 backdrop-blur-md pt-safe border-b border-slate-200/80 shadow-sm">
+    <div class="h-16 px-4 flex items-center justify-between gap-3 max-w-[440px] mx-auto">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-sky-400 flex items-center justify-center shadow-md shadow-blue-500/20 text-white flex-shrink-0">
+          <span class="material-symbols-outlined text-[22px]">${iconName||'verified'}</span>
+        </div>
+        <div class="flex flex-col min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="font-bebas text-2xl tracking-wider text-slate-900 leading-none">REMEMBERIT</span>
+            <span class="px-1.5 py-0.5 rounded-full bg-pink-50 border border-pink-200 text-pink-600 font-semibold text-[10px] tracking-wide uppercase">Private</span>
+          </div>
+          <div class="flex items-center gap-1.5 mt-0.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="text-xs text-slate-500 font-medium truncate">${subtitle}</span>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">${headerRight()}</div>
+    </div>
+  </header>`;
+}
+function headerRight(){ return `
+  <button class="w-9 h-9 flex items-center justify-center rounded-full bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 active:scale-95 transition-all shadow-sm" onclick="go('#/analytics')" title="Analytics & backup">
+    <span class="material-symbols-outlined text-[20px]">person</span>
+  </button>`; }
+
+function bottomNav(active) {
+  const item = (key, path, icon, label, isActive) => `
+    <a class="flex flex-col items-center justify-center gap-1 w-16 h-12 ${isActive?'text-blue-600':'text-slate-500 hover:text-slate-900'} transition-all active:scale-95" href="${path}" ${isActive?'aria-current="page"':''}>
+      ${key==='new' ? `
+        <div class="w-10 h-10 -mt-4 rounded-2xl bg-gradient-to-tr from-blue-600 to-sky-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/30 active:scale-90 transition-all">
+          <span class="material-symbols-outlined text-[24px]">add</span>
+        </div>
+        <span class="text-[10px] font-semibold text-slate-700 -mt-0.5">${label}</span>` : `
+        <div class="${isActive?'w-8 h-5 rounded-full bg-blue-100 flex items-center justify-center':''}">
+          <span class="material-symbols-outlined text-[18px]">${icon}</span>
+        </div>
+        <span class="text-[10px] font-bold">${label}</span>`}
+    </a>`;
+  return `
+  <nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-white/95 backdrop-blur-lg border-t border-slate-200/90 shadow-[0_-4px_16px_rgba(0,0,0,0.04)]">
+    <div class="flex justify-around items-center h-16 px-2 max-w-[440px] mx-auto">
+      ${item('dash','#/dashboard','fact_check','Dashboard', active==='dashboard')}
+      ${item('hist','#/history','history','History', active==='history')}
+      ${item('new','#/new','','New Item', active==='new')}
+      ${item('ana','#/analytics','finance_chip','Analytics', active==='analytics')}
+    </div>
+  </nav>`;
+}
+
+/* ---------- status chip helpers ---------- */
+function statusChip(st, item) {
+  switch (st.code) {
+    case 'overdue': return `<span class="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 font-bold text-[10px] tracking-wide uppercase">${Math.abs(st.dueIn)} Days Overdue</span>`;
+    case 'duesoon': return `<span class="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-bold text-[10px] tracking-wide uppercase">${st.dueIn<=0 ? 'Due Today' : 'Due in '+st.dueIn+' days'}</span>`;
+    case 'never':   return `<span class="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 font-bold text-[10px] tracking-wide uppercase">Never Logged</span>`;
+    case 'good':    return `<span class="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[10px] tracking-wide uppercase">${st.dueIn} Days Left</span>`;
+    default:        return `<span class="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-600 font-bold text-[10px] tracking-wide uppercase">Log Only</span>`;
+  }
+}
+function cadenceChip(item) {
+  if (!item.intervalDays) return '';
+  const label = item.intervalDays>=365 ? 'Yearly' : item.intervalDays>=60 ? 'Cadence: '+item.intervalDays+'d' : item.intervalDays===30 ? 'Monthly' : item.intervalDays===7 ? 'Weekly' : 'Every '+item.intervalDays+'d';
+  return `<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium text-[10px]">${label}</span>`;
+}
+function footerInfo(st, item) {
+  if (!st.last) return `<span class="flex items-center gap-1.5 text-slate-500 text-xs font-medium"><span class="material-symbols-outlined text-[16px]">history_toggle_off</span><span>No logs yet</span></span>`;
+  if (st.code==='overdue') return `<span class="flex items-center gap-1.5 text-rose-600 text-xs font-medium"><span class="material-symbols-outlined text-[16px]">warning</span><span>${ago(st.daysSince)} (Cadence: ${item.intervalDays}d)</span></span>`;
+  if (st.code==='duesoon') return `<span class="flex items-center gap-1.5 text-amber-700 text-xs font-medium"><span class="material-symbols-outlined text-[16px]">timelapse</span><span>Last done ${st.daysSince}d ago</span></span>`;
+  return `<span class="flex items-center gap-1.5 text-emerald-700 text-xs font-medium"><span class="material-symbols-outlined text-[16px]">task_alt</span><span>Done ${st.daysSince}d ago</span></span>`;
+}
+function lastCost(itemId){
+  const evs = eventsFor(itemId).filter(e=>e.cost>0);
+  return evs.length ? fmtMoney(evs[0].cost) : null;
+}
+function iconTile(item) {
+  const tone = { vehicles:'bg-blue-50 border-blue-100 text-blue-600', home:'bg-slate-100 border-slate-200 text-slate-600', personal:'bg-pink-50 border-pink-100 text-pink-600' }[item.category] || 'bg-slate-100 border-slate-200 text-slate-600';
+  return `<div class="w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 ${tone}"><span class="material-symbols-outlined text-[18px]">${esc(item.icon)}</span></div>`;
+}
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+function viewDashboard() {
+  const rows = state.items.map(it => ({ it, st: statusOf(it) }));
+  const counts = { overdue:0, duesoon:0, good:0 };
+  rows.forEach(r => { if (counts[r.st.code]!==undefined) counts[r.st.code]++; });
+
+  const catMeta = { vehicles:['two_wheeler','Vehicles'], home:['roofing','Home & Appliances'], personal:['health_and_safety','Personal'] };
+  const activeCats = [...new Set(state.items.map(i=>i.category))];
+
+  const pills = [
+    `<button class="filter-pill flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all flex-shrink-0 ${pillOn('all')}" data-filter="all"><span>All</span><span class="w-4 h-4 rounded-full ${currentFilter==='all'?'bg-white/20 text-white':'bg-blue-100 text-blue-700'} flex items-center justify-center text-[10px] font-bold">${state.items.length}</span></button>`,
+    `<button class="filter-pill flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all flex-shrink-0 ${pillOn('overdue')}" data-filter="overdue"><span>Overdue</span><span class="w-4 h-4 rounded-full ${currentFilter==='overdue'?'bg-white/20 text-white':'bg-rose-100 text-rose-700'} flex items-center justify-center text-[10px] font-bold">${counts.overdue}</span></button>`,
+    `<button class="filter-pill flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all flex-shrink-0 ${pillOn('duesoon')}" data-filter="duesoon"><span>Due Soon</span><span class="w-4 h-4 rounded-full ${currentFilter==='duesoon'?'bg-white/20 text-white':'bg-amber-100 text-amber-700'} flex items-center justify-center text-[10px] font-bold">${counts.duesoon}</span></button>`,
+    ...activeCats.map(c => `<button class="filter-pill flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium active:scale-95 transition-all flex-shrink-0 ${pillOn(c)}" data-filter="${c}"><span class="material-symbols-outlined text-[15px] ${currentFilter===c?'text-white':'text-slate-500'}">${catMeta[c][0]}</span><span>${catMeta[c][1]}</span></button>`)
+  ].join('');
+
+  const sorted = rows.slice().sort((a,b) => (STATUS_ORDER[a.st.code]-STATUS_ORDER[b.st.code]) || ((b.st.daysSince??-1)-(a.st.daysSince??-1)));
+  const visible = sorted.filter(r => passesFilter(r));
+  const cards = visible.map(r => {
+    const { it, st } = r;
+    const cost = lastCost(it.id);
+    return `
+    <div class="task-card flex flex-col bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden transition-all duration-200" data-status="${st.code}" data-category="${it.category}">
+      <div class="p-4">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex flex-col min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
+              ${statusChip(st, it)}
+              ${cadenceChip(it)}
+            </div>
+            <span class="text-base font-bold text-slate-900 tracking-tight truncate">${esc(it.name)}</span>
+            <span class="text-xs text-slate-500 mt-0.5">${esc(it.subtitle||'')}</span>
+          </div>
+          ${cost ? `
+          <div class="flex flex-col items-end">
+            <span class="text-[10px] text-slate-400 uppercase font-semibold">Last Cost</span>
+            <span class="font-bebas text-xl text-blue-600 tracking-wide">${cost}</span>
+          </div>` : iconTile(it)}
+        </div>
+      </div>
+      <div class="flex items-center justify-between px-4 py-2.5 bg-slate-50/80 border-t border-slate-100">
+        ${footerInfo(st, it)}
+        <div class="flex items-center gap-2">
+          <button class="w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-500 flex items-center justify-center active:scale-95 transition-all" onclick="go('#/item/${it.id}')" title="Open history">
+            <span class="material-symbols-outlined text-[16px]">clock_arrow_up</span>
+          </button>
+          ${st.code==='good'
+            ? `<button class="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs active:scale-95 transition-all" onclick="quickLog('${it.id}')"><span class="material-symbols-outlined text-[15px]">sync</span><span>Log</span></button>`
+            : `<button class="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm shadow-blue-500/20 active:scale-95 transition-all" onclick="quickLog('${it.id}')"><span class="material-symbols-outlined text-[16px]">check</span><span>Done</span></button>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const queueCount = visible.length;
+
+  return `
+  ${header('100% Local & Private Storage','verified')}
+  <main class="flex-1 flex flex-col relative w-full pt-20 pb-28 max-w-[440px] mx-auto px-4">
+    <div class="flex flex-col w-full space-y-4">
+      <div class="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 border border-blue-100">
+            <span class="material-symbols-outlined text-[18px]">security</span>
+          </div>
+          <div class="flex flex-col min-w-0">
+            <span class="text-xs text-slate-900 font-bold tracking-tight">Zero Cloud Telemetry</span>
+            <span class="text-[11px] text-slate-500 truncate">All maintenance logs remain solely on hardware.</span>
+          </div>
+        </div>
+        <span class="material-symbols-outlined text-slate-400 text-[18px] ml-1">lock</span>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2.5">
+        <div class="flex flex-col p-3 rounded-2xl bg-white border border-rose-100 shadow-sm relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-8 h-8 bg-rose-50 rounded-bl-xl flex items-center justify-center"><span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span></div>
+          <span class="text-[10px] text-rose-600 font-bold uppercase tracking-wider">Overdue</span>
+          <div class="flex items-baseline gap-1 mt-0.5"><span class="font-bebas text-4xl text-rose-600 leading-none">${String(counts.overdue).padStart(2,'0')}</span><span class="text-[11px] text-slate-400 font-semibold uppercase">tasks</span></div>
+        </div>
+        <div class="flex flex-col p-3 rounded-2xl bg-white border border-amber-100 shadow-sm relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-8 h-8 bg-amber-50 rounded-bl-xl flex items-center justify-center"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span></div>
+          <span class="text-[10px] text-amber-600 font-bold uppercase tracking-wider">Due Soon</span>
+          <div class="flex items-baseline gap-1 mt-0.5"><span class="font-bebas text-4xl text-amber-600 leading-none">${String(counts.duesoon).padStart(2,'0')}</span><span class="text-[11px] text-slate-400 font-semibold uppercase">upcoming</span></div>
+        </div>
+        <div class="flex flex-col p-3 rounded-2xl bg-white border border-emerald-100 shadow-sm relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-8 h-8 bg-emerald-50 rounded-bl-xl flex items-center justify-center"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span></div>
+          <span class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">In Order</span>
+          <div class="flex items-baseline gap-1 mt-0.5"><span class="font-bebas text-4xl text-emerald-600 leading-none">${String(counts.good).padStart(2,'0')}</span><span class="text-[11px] text-slate-400 font-semibold uppercase">on track</span></div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 -mx-4 px-4" id="filter-container">${pills}</div>
+
+      <div class="flex items-center justify-between pt-1">
+        <span class="font-bebas text-lg text-slate-900 tracking-wide">MAINTENANCE QUEUE</span>
+        <span class="text-[11px] font-semibold text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full border border-pink-200/80">${queueCount} ACTIVE ${queueCount===1?'TASK':'TASKS'}</span>
+      </div>
+
+      <div class="flex flex-col space-y-3" id="tasks-list">
+        ${cards || `
+        <div class="bg-white rounded-2xl border border-slate-200 p-8 flex flex-col items-center text-center gap-3">
+          <div class="w-14 h-14 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center"><span class="material-symbols-outlined text-[30px]">add_task</span></div>
+          <p class="text-sm font-bold text-slate-900">${state.items.length ? 'Nothing matches this filter' : 'No trackers yet'}</p>
+          <p class="text-xs text-slate-500">${state.items.length ? 'Try a different filter pill above.' : 'Add your first thing you keep forgetting — like a bike wash or oil change.'}</p>
+          <button class="mt-1 h-10 px-5 rounded-xl bg-blue-600 text-white text-xs font-bold active:scale-95 transition-all" onclick="go('#/new')">+ Add Item</button>
+        </div>`}
+      </div>
+    </div>
+  </main>
+  ${bottomNav('dashboard')}`;
+}
+function pillOn(f){ return currentFilter===f ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/25' : 'bg-white border border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm'; }
+function passesFilter(r){
+  if (currentFilter==='all') return true;
+  if (currentFilter==='overdue') return r.st.code==='overdue';
+  if (currentFilter==='duesoon') return r.st.code==='duesoon';
+  return r.it.category===currentFilter;
+}
+
+function quickLog(itemId, opts) {
+  const it = itemById(itemId); if (!it) return;
+  const today = todayStr();
+  if (!(opts && opts.force) && state.events.some(e=>e.itemId===itemId && e.date===today)) {
+    showToast('Already logged today — open the item to edit it','info');
+    return;
+  }
+  state.events.push({ id:uid(), itemId, date:today, cost:(opts&&opts.cost)||0, note:(opts&&opts.note)||'' });
+  save();
+  const removed = state.events[state.events.length-1];
+  setPendingUndo(() => { state.events = state.events.filter(e=>e.id!==removed.id); save(); render(); showToast('Log removed','undo'); });
+  render();
+  showToast(`${it.name} — logged for today!`,'check_circle',false,true);
+  fireReminderCheck();
+}
+
+/* ============================================================
+   ITEM TIMELINE
+   ============================================================ */
+function gaugeColor(st){
+  if (st.code==='overdue') return 'from-rose-400 to-rose-500';
+  if (st.code==='duesoon') return 'from-amber-400 to-amber-500';
+  return 'from-brand-400 to-brand-600';
+}
+function viewItem(id) {
+  const it = itemById(id);
+  if (!it) return `<main class="flex-1 flex items-center justify-center text-sm text-slate-500 pt-20">Item not found. <button class="ml-2 text-blue-600 font-bold" onclick="go('#/dashboard')">Go back</button></main>${bottomNav('history')}`;
+  const st = statusOf(it);
+  const evs = eventsFor(it.id);
+  const costs = evs.filter(e=>e.cost>0);
+  const totalSpent = costs.reduce((s,e)=>s+Number(e.cost||0),0);
+  const perCycle = costs.length ? Math.round(totalSpent/costs.length) : 0;
+  let avgCad = null;
+  if (evs.length>=2 && it.intervalDays) {
+    const asc = evs.map(e=>e.date).sort();
+    const gaps = [];
+    for (let i=1;i<asc.length;i++) gaps.push(Math.round((parseD(asc[i])-parseD(asc[i-1]))/DAY));
+    avgCad = Math.round(gaps.reduce((s,g)=>s+g,0)/gaps.length);
+  }
+  const pct = (st.daysSince!=null && it.intervalDays) ? Math.min(100, Math.round(st.daysSince/it.intervalDays*100)) : 0;
+
+  const timeline = evs.map((e, idx) => `
+    <div class="relative flex items-start gap-3.5 pb-4 group">
+      <div class="relative z-10 flex items-center justify-center w-7 h-7 rounded-full ${idx===0?'bg-brand-500 text-white shadow-md':'bg-white border-2 border-slate-300 text-slate-500 shadow-xs'} flex-shrink-0 mt-1 ring-4 ring-background">
+        <span class="material-symbols-outlined text-[15px]">${idx===0?'check':'done'}</span>
+      </div>
+      <div class="flex-1 bg-white p-4 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.03)] border border-slate-100 transition-all hover:border-brand-200">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <span class="text-[11px] font-bold ${idx===0?'text-brand-600':'text-slate-400'}">${ago(daysSince(e.date))}</span>
+          <div class="flex items-center gap-2">
+            ${e.cost>0?`<span class="px-2 py-0.5 rounded-md ${idx===0?'bg-accent-50 border border-accent-200/60 text-accent-500':'bg-slate-100 text-slate-700'} font-bebas text-[16px] tracking-wider">${fmtMoney(e.cost)}</span>`:''}
+            <button class="w-6 h-6 rounded-md text-slate-300 hover:text-red-500 flex items-center justify-center opacity-60 group-hover:opacity-100 transition-all" onclick="deleteEvent('${e.id}','${it.id}')" title="Delete entry">
+              <span class="material-symbols-outlined text-[15px]">delete</span>
+            </button>
+          </div>
+        </div>
+        <p class="text-[14px] font-bold text-slate-900 mb-1">${fmtDate(e.date)}</p>
+        ${e.note?`<p class="text-[12px] font-medium text-slate-600 leading-relaxed">${esc(e.note)}</p>`:''}
+      </div>
+    </div>`).join('');
+
+  return `
+  ${header('· Timeline','task_alt')}
+  <main class="flex-1 flex flex-col relative w-full pt-20 pb-28 bg-background max-w-[440px] mx-auto px-4">
+    <div class="flex flex-col w-full pb-safe">
+      <div class="flex items-center justify-between py-2 mb-3">
+        <button class="flex items-center gap-1.5 text-slate-600 hover:text-slate-900 transition-colors py-1.5 px-2.5 -ml-2 rounded-lg bg-white/70 border border-slate-200/60" onclick="go('#/dashboard')">
+          <span class="material-symbols-outlined text-[18px]">arrow_back</span>
+          <span class="text-[12px] font-semibold">Dashboard</span>
+        </button>
+        <div class="flex items-center gap-2">
+          <button aria-label="Edit item" class="w-9 h-9 rounded-xl bg-white border border-slate-200/80 flex items-center justify-center text-slate-600 hover:text-blue-600 active:scale-95 transition-all shadow-xs" onclick="go('#/edit/${it.id}')">
+            <span class="material-symbols-outlined text-[18px]">tune</span>
+          </button>
+          <button aria-label="Delete item" class="w-9 h-9 rounded-xl bg-white border border-slate-200/80 flex items-center justify-center text-slate-600 hover:text-red-600 active:scale-95 transition-all shadow-xs" onclick="deleteItem('${it.id}')">
+            <span class="material-symbols-outlined text-[18px]">delete</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="px-2.5 py-0.5 rounded-full bg-accent-100 text-accent-500 font-bold text-[10px] tracking-wider uppercase">${catLabel(it.category)}</span>
+          ${st.code==='overdue'?'<span class="flex h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>':''}
+        </div>
+        <h1 class="text-[24px] font-bold text-slate-900 tracking-tight">${esc(it.name)}</h1>
+        <p class="text-[13px] font-medium text-slate-500 flex items-center gap-1.5 mt-1">
+          <span class="material-symbols-outlined text-brand-500 text-[18px]">${esc(it.icon)}</span>${esc(it.subtitle||'')}
+        </p>
+      </div>
+
+      <div class="relative overflow-hidden rounded-2xl bg-white p-5 shadow-[0_4px_20px_rgba(37,99,235,0.06)] border border-slate-100 mb-4">
+        <div class="absolute -right-10 -bottom-10 w-36 h-36 bg-accent-100/60 rounded-full blur-2xl pointer-events-none"></div>
+        <div class="absolute -left-10 -top-10 w-32 h-32 bg-brand-50 rounded-full blur-xl pointer-events-none"></div>
+        <div class="relative flex items-center justify-between mb-4">
+          ${st.code==='overdue'
+            ? `<span class="px-3 py-1 rounded-full bg-rose-50 border border-rose-200/70 text-rose-600 font-bold text-[11px] flex items-center gap-1 shadow-2xs"><span class="material-symbols-outlined text-[14px]">warning</span>Overdue by ${Math.abs(st.dueIn)} days</span>`
+            : st.code==='duesoon'
+            ? `<span class="px-3 py-1 rounded-full bg-amber-50 border border-amber-200/70 text-amber-700 font-bold text-[11px] flex items-center gap-1 shadow-2xs"><span class="material-symbols-outlined text-[14px]">timelapse</span>${st.dueIn<=0?'Due today':'Due in '+st.dueIn+' days'}</span>`
+            : st.code==='good'
+            ? `<span class="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200/70 text-emerald-700 font-bold text-[11px] flex items-center gap-1 shadow-2xs"><span class="material-symbols-outlined text-[14px]">task_alt</span>In order · ${st.dueIn} days left</span>`
+            : `<span class="px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 font-bold text-[11px] flex items-center gap-1">${it.intervalDays?'Never logged':'Log-only tracker'}</span>`}
+          ${it.intervalDays?`<span class="text-[11px] font-semibold text-slate-500 flex items-center gap-1 bg-slate-100/80 px-2.5 py-1 rounded-full"><span class="material-symbols-outlined text-[14px] text-brand-500">autorenew</span>Repeats ${it.intervalDays}d</span>`:''}
+        </div>
+        <div class="relative flex items-baseline justify-between mb-3">
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">${st.nextDue?'Scheduled Target':'Last Done'}</p>
+            <p class="text-[16px] font-bold text-slate-800 mt-0.5">${st.last?fmtDate(st.last.date):'—'}</p>
+          </div>
+          <div class="text-right">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Elapsed</p>
+            <p class="font-bebas text-[30px] leading-none ${st.code==='overdue'?'text-rose-500':st.code==='duesoon'?'text-amber-600':'text-slate-800'} tracking-wide mt-0.5">${st.daysSince!=null?st.daysSince+' DAYS':'—'}</p>
+          </div>
+        </div>
+        ${it.intervalDays?`
+        <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden mb-5">
+          <div class="bg-gradient-to-r ${gaugeColor(st)} h-full rounded-full transition-all duration-500" style="width:${pct}%"></div>
+        </div>`:'<div class="mb-5"></div>'}
+        <div class="flex flex-col gap-2">
+          <button class="w-full h-12 bg-brand-500 hover:bg-brand-600 text-white font-bold text-[15px] flex items-center justify-center gap-2 rounded-xl shadow-[0_4px_14px_rgba(59,130,246,0.35)] active:scale-98 transition-all" id="log-trigger-btn" type="button" onclick="openLogDrawer()">
+            <span class="material-symbols-outlined text-[20px]">check_circle</span>
+            <span>Log Done Today</span>
+          </button>
+          <div class="hidden flex-col gap-2.5 pt-2" id="quick-log-drawer">
+            <div class="grid grid-cols-2 gap-2">
+              <div class="relative bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <span class="block text-[10px] font-bold text-slate-500 uppercase">Cost (Rs)</span>
+                <input id="log-cost" class="w-full bg-transparent font-bebas text-[18px] text-slate-900 focus:outline-none placeholder:text-slate-300" placeholder="0" type="number" min="0"/>
+              </div>
+              <div class="relative bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <span class="block text-[10px] font-bold text-slate-500 uppercase">Date</span>
+                <input id="log-date" class="w-full bg-transparent text-[13px] font-semibold text-slate-800 focus:outline-none" type="date" value="${todayStr()}"/>
+              </div>
+            </div>
+            <div class="relative bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+              <span class="block text-[10px] font-bold text-slate-500 uppercase">Quick Note</span>
+              <input id="log-note" class="w-full bg-transparent text-[12px] font-medium text-slate-800 focus:outline-none placeholder:text-slate-300" placeholder="e.g., Castrol Power1 + O-ring changed" type="text"/>
+            </div>
+            <div class="flex gap-2 pt-1">
+              <button class="flex-1 h-11 bg-brand-500 text-white font-bold text-[13px] rounded-xl active:scale-95 transition-transform flex items-center justify-center gap-1.5 shadow-sm shadow-brand-500/30" type="button" onclick="saveDetailedLog('${it.id}')">
+                <span class="material-symbols-outlined text-[18px]">verified</span>Save Log
+              </button>
+              <button class="h-11 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-[13px] rounded-xl active:scale-95 transition-transform" type="button" onclick="closeLogDrawer()">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2.5 mb-5">
+        <div class="flex flex-col bg-white p-3.5 rounded-2xl border border-slate-100 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
+          <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Completions</span>
+          <span class="font-bebas text-[30px] leading-tight text-slate-900 mt-0.5">${evs.length}</span>
+          <span class="text-[11px] font-bold ${evs.length?'text-emerald-600':'text-slate-400'} flex items-center gap-0.5 mt-0.5"><span class="material-symbols-outlined text-[13px]">task_alt</span>${evs.length?'Logged':'None'}</span>
+        </div>
+        <div class="flex flex-col bg-white p-3.5 rounded-2xl border border-slate-100 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
+          <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Avg Cadence</span>
+          <span class="font-bebas text-[30px] leading-tight text-slate-900 mt-0.5">${avgCad!=null?avgCad:'—'}<span class="text-[18px] font-sans font-bold text-slate-400 ml-0.5">${avgCad!=null?'D':''}</span></span>
+          <span class="text-[11px] font-bold ${avgCad!=null&&it.intervalDays&&avgCad<=it.intervalDays?'text-emerald-600':'text-slate-400'} flex items-center gap-0.5 mt-0.5"><span class="material-symbols-outlined text-[13px]">speed</span>${avgCad!=null?(it.intervalDays&&avgCad<=it.intervalDays?'On pace':'Slipping'):'—'}</span>
+        </div>
+        <div class="flex flex-col bg-white p-3.5 rounded-2xl border border-slate-100 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
+          <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Total Spent</span>
+          <span class="font-bebas text-[28px] leading-tight text-slate-900 mt-0.5">${fmtMoney(totalSpent)}</span>
+          <span class="text-[10px] font-semibold text-slate-500 flex items-center gap-0.5 mt-0.5"><span class="material-symbols-outlined text-[12px]">analytics</span>${costs.length?fmtMoney(perCycle)+'/cyc':'No costs'}</span>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between mb-3.5">
+        <div class="flex items-center gap-2">
+          <h2 class="text-[17px] font-bold text-slate-900">Service Log</h2>
+          <span class="px-2.5 py-0.5 rounded-full bg-brand-50 border border-brand-200/60 text-brand-600 font-bold text-[11px]">${evs.length} Logs</span>
+        </div>
+      </div>
+
+      <div class="relative flex flex-col pl-4">
+        ${evs.length?'<div class="absolute left-[27px] top-4 bottom-8 w-0.5 bg-slate-200"></div>':''}
+        ${timeline || `<div class="bg-white rounded-2xl border border-slate-100 p-6 text-center text-xs text-slate-500">No logs yet — tap “Log Done Today” the next time you do this.</div>`}
+      </div>
+
+      <div class="mt-6 p-4 rounded-2xl bg-white border border-slate-100 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-brand-50 border border-brand-100 flex items-center justify-center text-brand-600">
+            <span class="material-symbols-outlined text-[20px]">notifications_active</span>
+          </div>
+          <div class="flex flex-col">
+            <span class="font-bold text-[13px] text-slate-900">Smart Auto-Reminders</span>
+            <span class="text-[11px] font-medium text-slate-500">Alerts as the due date nears</span>
+          </div>
+        </div>
+        <button onclick="toggleRemind('${it.id}')" class="w-12 h-6 rounded-full relative p-0.5 cursor-pointer shadow-inner transition-colors ${it.remind?'bg-brand-500':'bg-slate-300'}">
+          <div class="w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${it.remind?'ml-auto':''}"></div>
+        </button>
+      </div>
+    </div>
+  </main>
+  ${bottomNav('history')}`;
+}
+function catLabel(c){ return { vehicles:'Garage • Vehicles', home:'Home • Appliances', personal:'Personal • Health' }[c] || c; }
+function openLogDrawer(){
+  document.getElementById('log-trigger-btn').classList.add('hidden');
+  const d = document.getElementById('quick-log-drawer');
+  d.classList.remove('hidden'); d.classList.add('flex');
+}
+function closeLogDrawer(){
+  document.getElementById('log-trigger-btn').classList.remove('hidden');
+  const d = document.getElementById('quick-log-drawer');
+  d.classList.add('hidden'); d.classList.remove('flex');
+}
+function saveDetailedLog(itemId){
+  const cost = Math.max(0, Number(document.getElementById('log-cost').value)||0);
+  const note = document.getElementById('log-note').value.trim();
+  let date = document.getElementById('log-date').value || todayStr();
+  if (date > todayStr()) date = todayStr();
+  if (state.events.some(e=>e.itemId===itemId && e.date===date)) {
+    showToast('An entry for '+fmtDate(date)+' already exists','info');
+    return;
+  }
+  state.events.push({ id:uid(), itemId, date, cost, note });
+  save();
+  const removed = state.events[state.events.length-1];
+  setPendingUndo(()=>{ state.events = state.events.filter(e=>e.id!==removed.id); save(); render(); showToast('Log removed','undo'); });
+  render();
+  showToast(`Logged for ${fmtDate(date)}`,'check_circle',false,true);
+}
+function deleteEvent(eid, itemId){
+  if (!confirm('Delete this log entry? This cannot be undone.')) return;
+  state.events = state.events.filter(e=>e.id!==eid);
+  save(); render(); showToast('Log entry deleted','delete',true);
+}
+function deleteItem(id){
+  const it = itemById(id); if (!it) return;
+  const n = eventsFor(id).length;
+  if (!confirm(`Delete “${it.name}” and its ${n} log${n===1?'':'s'}? This cannot be undone.`)) return;
+  state.items = state.items.filter(i=>i.id!==id);
+  state.events = state.events.filter(e=>e.itemId!==id);
+  save(); go('#/dashboard'); render(); showToast('Item deleted','delete',true);
+}
+function toggleRemind(id){
+  const it = itemById(id); if (!it) return;
+  it.remind = !it.remind;
+  save(); render();
+  if (it.remind && 'Notification' in window && Notification.permission==='default') Notification.requestPermission();
+  showToast(it.remind ? 'Reminders on for '+it.name : 'Reminders off', 'notifications_active');
+}
+function fireReminderCheck(){
+  if (!('Notification' in window) || Notification.permission!=='granted') return;
+  state.items.forEach(it=>{
+    if (!it.remind || notified.has(it.id)) return;
+    const st = statusOf(it);
+    if ((st.code==='overdue'||st.code==='duesoon') && st.last) {
+      try { new Notification('RememberIt', { body: it.name + (st.code==='overdue' ? ' is overdue!' : ' is due soon.') }); } catch(e){}
+      notified.add(it.id);
+    }
+  });
+}
+
+/* ============================================================
+   HISTORY (all activity)
+   ============================================================ */
+function viewHistory() {
+  const evs = state.events.slice().sort((a,b)=> b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  const rows = evs.map(e=>{
+    const it = itemById(e.itemId); if (!it) return '';
+    return `
+    <div class="bg-white rounded-xl p-3.5 border border-slate-200/90 shadow-sm flex items-center justify-between hover:border-blue-300 transition-colors cursor-pointer" onclick="go('#/item/${it.id}')">
+      <div class="flex items-center gap-3 min-w-0">
+        ${iconTile(it)}
+        <div class="min-w-0">
+          <h3 class="text-sm font-semibold text-slate-900 truncate">${esc(it.name)}</h3>
+          <div class="flex items-center gap-1.5 mt-0.5">
+            <span class="text-[11px] font-semibold text-slate-500">${ago(daysSince(e.date))}</span>
+            <span class="text-[11px] text-slate-400">· ${fmtDate(e.date)}</span>
+          </div>
+          ${e.note?`<p class="text-[11px] text-slate-400 truncate mt-0.5 max-w-[220px]">${esc(e.note)}</p>`:''}
+        </div>
+      </div>
+      <div class="text-right flex-shrink-0 ml-3">
+        ${e.cost>0?`<div class="font-bebas text-lg text-slate-900 leading-none">${fmtMoney(e.cost)}</div>`:'<div class="text-[11px] text-slate-300">—</div>'}
+        <div class="text-[11px] font-semibold text-blue-600 mt-0.5">View</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `
+  ${header('· History','task_alt')}
+  <main class="flex-1 flex flex-col relative w-full pt-20 pb-28 max-w-[440px] mx-auto px-4">
+    <div class="flex flex-col space-y-4">
+      <div class="flex items-center justify-between pt-1">
+        <div>
+          <div class="flex items-center gap-1.5 text-blue-600 font-bebas text-sm tracking-wider"><span class="material-symbols-outlined text-[15px]">history</span><span>FULL TIMELINE</span></div>
+          <h1 class="font-bebas text-3xl text-slate-900 tracking-wide mt-0.5">All Activity</h1>
+        </div>
+        <span class="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">${evs.length} log${evs.length===1?'':'s'}</span>
+      </div>
+      <div class="flex flex-col space-y-2">
+        ${rows || `<div class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-xs text-slate-500">Nothing logged yet. Go mark something as Done!</div>`}
+      </div>
+    </div>
+  </main>
+  ${bottomNav('history')}`;
+}
+
+/* ============================================================
+   NEW / EDIT ITEM FORM
+   ============================================================ */
+const ICON_CHOICES = ['oil_barrel','water_drop','local_laundry_service','tire_repair','battery_charging_full','mode_fan','ac_unit','two_wheeler','directions_car','cleaning_services','plumbing','electrical_services','kitchen','grass','soap','medical_services','fitness_center','handyman','savings','home'];
+const CADENCE_CHOICES = [7,15,30,60,90,180,365];
+
+function viewForm(editId) {
+  const editing = editId ? itemById(editId) : null;
+  const it = editing || { name:'', subtitle:'', category:'home', icon:'cleaning_services', intervalDays:30, remind:false };
+  const iconGrid = ICON_CHOICES.map(ic => `
+    <button type="button" onclick="pickIcon('${ic}')" data-icon="${ic}" class="icon-opt w-11 h-11 rounded-xl border flex items-center justify-center active:scale-95 transition-all ${ic===it.icon?'bg-blue-600 text-white border-blue-600':'bg-white border-slate-200 text-slate-600 hover:border-blue-300'}">
+      <span class="material-symbols-outlined text-[20px]">${ic}</span>
+    </button>`).join('');
+  const cadence = it.intervalDays ? `
+    <div class="flex flex-wrap gap-2" id="cadence-chips">
+      ${CADENCE_CHOICES.map(d=>`<button type="button" onclick="pickCadence(${d})" data-d="${d}" class="cad-opt px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all ${d===it.intervalDays?'bg-blue-600 text-white shadow-sm shadow-blue-500/25':'bg-white border border-slate-200 text-slate-700'}">${d}d</button>`).join('')}
+    </div>` : '';
+  return `
+  ${header(editing?'· Edit Item':'· New Item','task_alt')}
+  <main class="flex-1 flex flex-col relative w-full pt-20 pb-28 max-w-[440px] mx-auto px-4">
+    <div class="flex flex-col space-y-4">
+      <div class="flex items-center justify-between pt-1">
+        <div>
+          <div class="flex items-center gap-1.5 text-blue-600 font-bebas text-sm tracking-wider"><span class="material-symbols-outlined text-[15px]">${editing?'tune':'add_task'}</span><span>${editing?'MODIFY TRACKER':'NEW TRACKER'}</span></div>
+          <h1 class="font-bebas text-3xl text-slate-900 tracking-wide mt-0.5">${editing?'Edit Item':'What do you keep forgetting?'}</h1>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col gap-4">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Item Name</label>
+          <input id="f-name" value="${esc(it.name)}" class="w-full h-11 bg-white border border-slate-300 rounded-xl px-3.5 text-[14px] font-semibold text-slate-900 focus:border-blue-600 focus:ring-3 focus:ring-blue-600/15 focus:outline-none" placeholder="e.g., Bike Oil Change" maxlength="60"/>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Short Detail <span class="text-slate-300 normal-case font-medium">(optional)</span></label>
+          <input id="f-subtitle" value="${esc(it.subtitle)}" class="w-full h-11 bg-white border border-slate-300 rounded-xl px-3.5 text-[13px] font-medium text-slate-800 focus:border-blue-600 focus:ring-3 focus:ring-blue-600/15 focus:outline-none" placeholder="e.g., Classic 350 Gunmetal Grey" maxlength="80"/>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Category</label>
+          <div class="grid grid-cols-3 gap-2" id="cat-chips">
+            ${[['vehicles','🏍️','Vehicle'],['home','🏠','Home'],['personal','🩺','Personal']].map(([v,e,l])=>`
+              <button type="button" onclick="pickCategory('${v}')" data-cat="${v}" class="cat-opt flex flex-col items-center gap-1 py-2.5 rounded-xl border text-xs font-semibold active:scale-95 transition-all ${v===it.category?'bg-blue-50 border-blue-400 text-blue-700':'bg-white border-slate-200 text-slate-600'}">
+                <span class="text-lg">${e}</span><span>${l}</span>
+              </button>`).join('')}
+          </div>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Icon</label>
+          <div class="flex flex-wrap gap-2" id="icon-grid">${iconGrid}</div>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Repeats Every</label>
+          <div class="flex flex-wrap gap-2 mb-2" id="mode-chips">
+            <button type="button" onclick="pickMode('repeat')" data-mode="repeat" class="mode-opt px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all ${it.intervalDays?'bg-blue-600 text-white shadow-sm shadow-blue-500/25':'bg-white border border-slate-200 text-slate-700'}">Repeats</button>
+            <button type="button" onclick="pickMode('log')" data-mode="log" class="mode-opt px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all ${!it.intervalDays?'bg-blue-600 text-white shadow-sm shadow-blue-500/25':'bg-white border border-slate-200 text-slate-700'}">Log only, never due</button>
+          </div>
+          <div id="cadence-area" class="${it.intervalDays?'':'view-hidden'}">
+            ${cadence}
+            <div class="flex items-center gap-2 mt-2.5">
+              <input id="f-interval" type="number" min="1" max="3650" value="${it.intervalDays||''}" class="w-28 h-10 bg-white border border-slate-300 rounded-xl px-3 text-[13px] font-bold text-slate-900 focus:border-blue-600 focus:ring-3 focus:ring-blue-600/15 focus:outline-none" placeholder="Custom"/>
+              <span class="text-xs text-slate-500 font-medium">days (custom value allowed)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex gap-2">
+        <button class="flex-1 h-12 bg-brand-500 hover:bg-brand-600 text-white font-bold text-[15px] rounded-xl shadow-[0_4px_14px_rgba(59,130,246,0.35)] active:scale-98 transition-all flex items-center justify-center gap-2" onclick="saveItem(${editing?`'${editing.id}'`:'null'})">
+          <span class="material-symbols-outlined text-[20px]">check_circle</span>${editing?'Save Changes':'Create Item'}
+        </button>
+        <button class="h-12 px-5 bg-white border border-slate-200 text-slate-600 font-semibold text-[13px] rounded-xl active:scale-95 transition-all" onclick="go(${editing?`'#/item/${editing.id}'`:`'#/dashboard'`})">Cancel</button>
+      </div>
+      ${editing?`<button class="w-full h-11 rounded-xl bg-white border border-red-200 text-red-600 font-semibold text-[13px] active:scale-95 transition-all flex items-center justify-center gap-1.5" onclick="deleteItem('${editing.id}')"><span class="material-symbols-outlined text-[17px]">delete</span>Delete this item</button>`:''}
+    </div>
+  </main>
+  ${bottomNav('new')}`;
+}
+let pickedIcon = null, pickedCategory = 'home', pickedMode = 'repeat';
+function pickIcon(ic){
+  pickedIcon = ic;
+  document.querySelectorAll('.icon-opt').forEach(b=>{
+    const on = b.getAttribute('data-icon')===ic;
+    b.className = `icon-opt w-11 h-11 rounded-xl border flex items-center justify-center active:scale-95 transition-all ${on?'bg-blue-600 text-white border-blue-600':'bg-white border-slate-200 text-slate-600 hover:border-blue-300'}`;
+  });
+}
+function pickCategory(c){
+  pickedCategory = c;
+  document.querySelectorAll('.cat-opt').forEach(b=>{
+    const on = b.getAttribute('data-cat')===c;
+    b.className = `cat-opt flex flex-col items-center gap-1 py-2.5 rounded-xl border text-xs font-semibold active:scale-95 transition-all ${on?'bg-blue-50 border-blue-400 text-blue-700':'bg-white border-slate-200 text-slate-600'}`;
+  });
+}
+function pickMode(m){
+  pickedMode = m;
+  document.querySelectorAll('.mode-opt').forEach(b=>{
+    const on = b.getAttribute('data-mode')===m;
+    b.className = `mode-opt px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all ${on?'bg-blue-600 text-white shadow-sm shadow-blue-500/25':'bg-white border border-slate-200 text-slate-700'}`;
+  });
+  document.getElementById('cadence-area').classList.toggle('view-hidden', m!=='repeat');
+}
+function pickCadence(d){
+  document.getElementById('f-interval').value = d;
+  document.querySelectorAll('.cad-opt').forEach(b=>{
+    const on = b.getAttribute('data-d')==String(d);
+    b.className = `cad-opt px-3.5 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all ${on?'bg-blue-600 text-white shadow-sm shadow-blue-500/25':'bg-white border border-slate-200 text-slate-700'}`;
+  });
+}
+function saveItem(editId){
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { showToast('Please give the item a name','error',true); document.getElementById('f-name').focus(); return; }
+  const subtitle = document.getElementById('f-subtitle').value.trim();
+  let interval = 0;
+  if (pickedMode==='repeat') {
+    interval = Math.max(1, Math.min(3650, Number(document.getElementById('f-interval').value)||0));
+    if (!interval) { showToast('Set a repeat cadence or choose “Log only”','error',true); return; }
+  }
+  if (editId) {
+    const it = itemById(editId);
+    Object.assign(it, { name, subtitle, category:pickedCategory, icon:pickedIcon, intervalDays:interval });
+    save(); go('#/item/'+editId); render(); showToast('Item updated');
+  } else {
+    const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    state.items.push({ id, name, subtitle, category:pickedCategory, icon:pickedIcon, intervalDays:interval, remind:false, createdAt:todayStr() });
+    save(); go('#/item/'+id); render(); showToast('Tracker created — log your first entry!');
+  }
+}
+
+/* ============================================================
+   ANALYTICS
+   ============================================================ */
+let analyticsRange = 'year';
+function viewAnalytics() {
+  const cutoff = analyticsRange==='year' ? addDaysStr(todayStr(),-365) : analyticsRange==='6m' ? addDaysStr(todayStr(),-183) : '0000-01-01';
+  const evs = state.events.filter(e=>e.date>=cutoff);
+  const withCost = evs.filter(e=>e.cost>0);
+  const totalSpent = withCost.reduce((s,e)=>s+Number(e.cost||0),0);
+  const perEvent = evs.length ? Math.round(totalSpent/evs.length) : 0;
+
+  // adherence: gaps between consecutive logs vs cadence
+  let onSched = 0, gaps = 0;
+  state.items.filter(i=>i.intervalDays).forEach(it=>{
+    const asc = eventsFor(it.id).map(e=>e.date).sort();
+    for (let i=1;i<asc.length;i++){
+      const g = Math.round((parseD(asc[i])-parseD(asc[i-1]))/DAY);
+      if (g <= 0) continue;
+      gaps++;
+      if (g <= it.intervalDays*1.05) onSched++;
+    }
+  });
+  const adherence = gaps ? Math.round(onSched/gaps*100) : null;
+
+  const overdueCount = state.items.filter(i=>statusOf(i).code==='overdue').length;
+
+  // category allocation
+  const cats = ['vehicles','home','personal'].map(c=>{
+    const cev = withCost.filter(e=>{ const it=itemById(e.itemId); return it && it.category===c; });
+    return { c, sum: cev.reduce((s,e)=>s+Number(e.cost),0), logs: cev.length };
+  });
+  const catTotal = cats.reduce((s,x)=>s+x.sum,0);
+  const catMeta = { vehicles:['🏍️','bg-blue-500','Vehicles & Transit','bg-blue-100','text-blue-700'], home:['🏠','bg-amber-400','Appliances & Home','bg-amber-100','text-amber-700'], personal:['🩺','bg-pink-400','Personal & Health','bg-pink-100','text-pink-700'] };
+  const catRows = cats.filter(x=>x.sum>0).sort((a,b)=>b.sum-a.sum).map(x=>{
+    const m = catMeta[x.c]; const pct = catTotal?Math.round(x.sum/catTotal*100):0;
+    return `
+    <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50/80 border border-slate-100 hover:bg-slate-100/70 transition-colors">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl ${m[3]} ${m[4]} flex items-center justify-center text-base">${m[0]}</div>
+        <div>
+          <div class="text-sm text-slate-900 font-semibold">${m[2]}</div>
+          <div class="text-xs text-slate-400 font-medium">${pct}% of total</div>
+        </div>
+      </div>
+      <div class="text-right">
+        <div class="font-bebas text-lg text-slate-900 leading-none">${fmtMoney(x.sum)}</div>
+        <div class="text-[11px] font-semibold text-slate-500 mt-0.5">${x.logs} log${x.logs===1?'':'s'}</div>
+      </div>
+    </div>`;
+  }).join('') || `<p class="text-xs text-slate-400 text-center py-3">No costs recorded in this period yet.</p>`;
+  const segs = cats.filter(x=>x.sum>0).map((x,i,arr)=>{
+    const pct = catTotal?(x.sum/catTotal*100):0;
+    const last = i===arr.length-1;
+    return `<div class="${catMeta[x.c][1]} h-full transition-all duration-500 ${i===0?'rounded-l-full':''} ${last?'rounded-r-full':''}" style="width:${pct}%" title="${catMeta[x.c][2]} (${Math.round(pct)}%)"></div>`;
+  }).join('') || '<div class="bg-slate-200 h-full w-full rounded-full"></div>';
+
+  // top sinks
+  const sinks = state.items.map(it=>{
+    const ev2 = evs.filter(e=>e.itemId===it.id);
+    const sum = ev2.filter(e=>e.cost>0).reduce((s,e)=>s+Number(e.cost),0);
+    return { it, sum, logs: ev2.length };
+  }).filter(x=>x.sum>0).sort((a,b)=>b.sum-a.sum).slice(0,5);
+  const sinkRows = sinks.map(x=>`
+    <div class="bg-white rounded-xl p-3.5 border border-slate-200/90 shadow-sm flex items-center justify-between hover:border-blue-300 transition-colors cursor-pointer" onclick="go('#/item/${x.it.id}')">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center flex-shrink-0">
+          <span class="material-symbols-outlined text-[20px]">${esc(x.it.icon)}</span>
+        </div>
+        <div class="min-w-0">
+          <h3 class="text-sm font-semibold text-slate-900 truncate">${esc(x.it.name)}</h3>
+          <div class="flex items-center gap-1.5 mt-0.5">
+            <span class="text-[11px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">${x.logs} logs</span>
+            <span class="text-xs text-slate-400 truncate">${esc(x.it.subtitle||'')}</span>
+          </div>
+        </div>
+      </div>
+      <div class="text-right flex-shrink-0 ml-3">
+        <div class="font-bebas text-lg text-slate-900 leading-none">${fmtMoney(x.sum)}</div>
+      </div>
+    </div>`).join('') || `<div class="bg-white rounded-xl p-5 border border-slate-200 text-center text-xs text-slate-400">No spending recorded in this period.</div>`;
+
+  return `
+  ${header('· Analytics','fact_check')}
+  <main class="flex-1 flex flex-col relative w-full pt-20 pb-28 max-w-[440px] mx-auto px-4">
+    <div class="flex flex-col w-full space-y-5">
+      <div class="flex flex-col space-y-3 pt-1">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="flex items-center gap-1.5 text-blue-600 font-bebas text-sm tracking-wider"><span class="material-symbols-outlined text-[15px]">finance_chip</span><span>SYSTEM METRICS</span></div>
+            <h1 class="font-bebas text-3xl text-slate-900 tracking-wide mt-0.5">Cost &amp; Habits</h1>
+          </div>
+          <div class="w-10 h-10 rounded-xl bg-white border border-slate-200/90 shadow-sm flex items-center justify-center text-blue-600"><span class="material-symbols-outlined text-[20px]">insights</span></div>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5 bg-slate-200/60 p-1 rounded-xl" id="time-filter-group">
+          ${[['year','This Year'],['6m','Last 6 Mos'],['all','All Time']].map(([v,l])=>`
+            <button class="time-filter-btn py-2 px-3 rounded-lg text-xs transition-all duration-200 text-center ${analyticsRange===v?'bg-white text-blue-600 shadow-sm font-semibold':'text-slate-600 hover:text-slate-900 hover:bg-white/50 font-medium'}" data-filter="${v}" type="button" onclick="setRange('${v}')">${l}</button>`).join('')}
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3.5">
+        <div class="col-span-2 bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-[0_4px_20px_rgba(37,99,235,0.06)] relative overflow-hidden flex flex-col justify-between">
+          <div class="absolute -right-8 -top-8 w-32 h-32 bg-gradient-to-br from-pink-200/50 via-blue-200/40 to-transparent rounded-full blur-xl pointer-events-none"></div>
+          <div class="flex items-center justify-between mb-2 z-10">
+            <span class="font-bebas text-slate-400 text-base tracking-wider uppercase">Total Investment</span>
+            <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-pink-600 bg-pink-50 border border-pink-200 px-2.5 py-0.5 rounded-full"><span class="material-symbols-outlined text-[13px]">savings</span>Tracked</span>
+          </div>
+          <div class="flex items-baseline gap-2 z-10 my-1">
+            <span class="font-bebas text-5xl text-slate-900 tracking-normal">${fmtMoney(totalSpent)}</span>
+            <span class="text-xs font-bold text-slate-400 tracking-wider">PKR</span>
+          </div>
+          <div class="mt-2 pt-2.5 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 flex items-center justify-between z-10">
+            <span class="text-xs font-medium text-slate-500">Across ${evs.length} lifecycle event${evs.length===1?'':'s'}</span>
+            <span class="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">${evs.length?'~'+fmtMoney(perEvent)+'/event':'—'}</span>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="font-bebas text-sm text-slate-400 tracking-wider uppercase">Adherence</span>
+            <span class="material-symbols-outlined text-emerald-500 text-[18px]">verified</span>
+          </div>
+          <div class="my-2">
+            <div class="font-bebas text-3xl ${adherence==null?'text-slate-300':adherence>=80?'text-emerald-600':adherence>=50?'text-amber-600':'text-rose-600'} leading-none">${adherence==null?'—':adherence+'%'}</div>
+            <div class="text-[11px] font-medium text-slate-500 mt-1">On-Schedule</div>
+          </div>
+          <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+            <div class="${adherence==null?'bg-slate-200':adherence>=80?'bg-emerald-500':adherence>=50?'bg-amber-500':'bg-rose-500'} h-full rounded-full transition-all duration-500" style="width:${adherence==null?100:adherence}%"></div>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-sm flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="font-bebas text-sm text-slate-400 tracking-wider uppercase">Coverage</span>
+            <span class="material-symbols-outlined text-blue-500 text-[18px]">tune</span>
+          </div>
+          <div class="my-2">
+            <div class="font-bebas text-3xl text-slate-900 leading-none">${state.items.length}</div>
+            <div class="text-[11px] font-medium text-slate-500 mt-1">Trackers Active</div>
+          </div>
+          <div class="flex items-center gap-1.5 text-[11px] font-semibold ${overdueCount?'text-rose-600':'text-blue-600'}">
+            <span class="w-1.5 h-1.5 rounded-full ${overdueCount?'bg-rose-500':'bg-blue-500'}"></span>
+            <span>${overdueCount} Overdue</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="font-bebas text-xl text-slate-900 tracking-wide">Category Allocation</h2>
+            <p class="text-xs text-slate-500">Where operational capital flows</p>
+          </div>
+          <div class="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500"><span class="material-symbols-outlined text-[18px]">pie_chart</span></div>
+        </div>
+        <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex gap-1 p-0.5">${segs}</div>
+        <div class="space-y-2.5 pt-1">${catRows}</div>
+      </div>
+
+      <div class="flex flex-col space-y-2.5">
+        <div class="flex items-center justify-between px-1">
+          <div>
+            <h2 class="font-bebas text-xl text-slate-900 tracking-wide">Top Maintenance Sinks</h2>
+            <span class="text-xs text-slate-500">Highest aggregate maintenance cost</span>
+          </div>
+          <span class="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full uppercase tracking-wider">RANKED</span>
+        </div>
+        <div class="space-y-2">${sinkRows}</div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200/60 flex items-center justify-center flex-shrink-0"><span class="material-symbols-outlined text-[22px]">lock</span></div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="font-bebas text-xl text-slate-900 tracking-wide">Backup &amp; Privacy</h2>
+              <span class="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Air-Gapped</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">No cloud sync, no tracking, 100% stored securely in this browser instance.</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 gap-2 pt-1">
+          <button class="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-blue-50/60 border border-slate-100 hover:border-blue-200 active:scale-[0.99] rounded-xl text-slate-800 transition-all" type="button" onclick="exportBackup()">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center"><span class="material-symbols-outlined text-[18px]">download</span></div>
+              <div class="text-left"><span class="text-xs font-semibold block text-slate-900">Export Backup (JSON)</span><span class="text-[11px] text-slate-400">rememberit-backup.json</span></div>
+            </div>
+            <span class="material-symbols-outlined text-slate-400 text-[18px]">chevron_right</span>
+          </button>
+          <button class="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-blue-50/60 border border-slate-100 hover:border-blue-200 active:scale-[0.99] rounded-xl text-slate-800 transition-all" type="button" onclick="restoreBackup()">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center"><span class="material-symbols-outlined text-[18px]">upload_file</span></div>
+              <div class="text-left"><span class="text-xs font-semibold block text-slate-900">Restore from File</span><span class="text-[11px] text-slate-400">Overwrites current data</span></div>
+            </div>
+            <span class="material-symbols-outlined text-slate-400 text-[18px]">chevron_right</span>
+          </button>
+          <button class="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-red-50 border border-slate-100 hover:border-red-200 active:scale-[0.99] rounded-xl text-red-600 transition-all group" type="button" onclick="clearData()">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center"><span class="material-symbols-outlined text-[18px]">delete_forever</span></div>
+              <div class="text-left"><span class="text-xs font-semibold block text-red-600">Clear Local Data</span><span class="text-[11px] text-red-400">Erase all items and logs permanently</span></div>
+            </div>
+            <span class="material-symbols-outlined text-red-400 text-[18px]">chevron_right</span>
+          </button>
+        </div>
+        <div class="flex items-center justify-center gap-1.5 text-center pt-1">
+          <span class="material-symbols-outlined text-[14px] text-emerald-600">verified_user</span>
+          <span class="text-[11px] font-medium text-slate-400">Zero telemetry · Zero third-party trackers</span>
+        </div>
+      </div>
+    </div>
+  </main>
+  ${bottomNav('analytics')}`;
+}
+function setRange(r){ analyticsRange = r; render(); }
+
+function exportBackup(){
+  const data = { app:'RememberIt', version:1, exportDate:new Date().toISOString(), items:state.items, events:state.events };
+  const blob = new Blob([JSON.stringify(data,null,2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `rememberit-backup-${todayStr()}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Backup exported successfully','download_done');
+}
+function restoreBackup(){
+  const input = document.createElement('input');
+  input.type='file'; input.accept='.json,application/json';
+  input.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!Array.isArray(data.items) || !Array.isArray(data.events)) throw new Error('bad shape');
+        if (!confirm(`Restore backup with ${data.items.length} items and ${data.events.length} logs? This replaces your current data.`)) return;
+        state = { version:1, items:data.items, events:data.events };
+        save(); render(); showToast('Backup restored','cloud_sync');
+      } catch(err) { showToast('Invalid backup file','error',true); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+function clearData(){
+  if (!confirm('Erase ALL items and logs permanently? Consider exporting a backup first.')) return;
+  state = { version:1, items:[], events:[] };
+  save(); render(); showToast('All local data cleared','delete',true);
+}
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+function showToast(msg, icon='check_circle', isError=false, keepUndo=false){
+  const t = document.getElementById('toast');
+  if (!keepUndo) pendingUndo = null;
+  document.getElementById('toast-message').textContent = msg;
+  document.getElementById('toast-icon').textContent = icon;
+  document.getElementById('toast-icon').className = `material-symbols-outlined text-[20px] flex-shrink-0 ${isError?'text-red-400':'text-emerald-400'}`;
+  const action = document.getElementById('toast-action');
+  action.classList.toggle('hidden', !pendingUndo);
+  t.classList.remove('translate-y-32','opacity-0','pointer-events-none');
+  t.classList.add('translate-y-0','opacity-100','pointer-events-auto');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(dismissToast, 4500);
+}
+function setPendingUndo(fn){ pendingUndo = fn; }
+function toastAction(){
+  if (pendingUndo) pendingUndo();
+  pendingUndo = null;
+  dismissToast();
+}
+function dismissToast(){
+  const t = document.getElementById('toast');
+  t.classList.add('translate-y-32','opacity-0','pointer-events-none');
+  t.classList.remove('translate-y-0','opacity-100','pointer-events-auto');
+  pendingUndo = null;
+}
+
+/* ---------- filter wiring (dashboard) ---------- */
+function wireFilters(){
+  const container = document.getElementById('filter-container');
+  if (!container) return;
+  container.querySelectorAll('.filter-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ currentFilter = btn.getAttribute('data-filter'); render(); });
+  });
+}
+
+/* ---------- render root ---------- */
+function render(){
+  const route = parseRoute();
+  if (route.view==='item' && !itemById(route.id)) { go('#/dashboard'); return; }
+  if (route.view==='edit' && !itemById(route.id)) { go('#/dashboard'); return; }
+  if (route.view==='edit') { pickedIcon = (itemById(route.id)||{}).icon; pickedCategory = (itemById(route.id)||{}).category || 'home'; pickedMode = (itemById(route.id)||{}).intervalDays ? 'repeat' : 'log'; }
+  if (route.view==='new') { pickedIcon = 'cleaning_services'; pickedCategory='home'; pickedMode='repeat'; }
+  let html = '';
+  if (route.view==='dashboard')      html = viewDashboard();
+  else if (route.view==='item')      html = viewItem(route.id);
+  else if (route.view==='history')   html = viewHistory();
+  else if (route.view==='new')       html = viewForm(null);
+  else if (route.view==='edit')      html = viewForm(route.id);
+  else                               html = viewAnalytics();
+  document.getElementById('app').innerHTML = html;
+  wireFilters();
+  if (route.view==='dashboard') fireReminderCheck();
+  window.scrollTo(0,0);
+}
+window.addEventListener('hashchange', render);
+load();
+render();
+</script>
+</body>
+</html>
